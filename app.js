@@ -8,20 +8,19 @@
 ══════════════════════════════════════════════════════ */
 
 $(function () {
+  $.ajaxSetup({ cache: false }); // Prevent aggressive browser caching of ThingSpeak API URLs
 
   /* ══ 1. DATA ══ */
-  const tempData  = [26,25,24,24,23,23,24,26,28,30,32,34,35,36,36,35,34,33,32,31,30,29,28,27];
-  const humData   = [78,80,82,83,85,84,82,78,74,70,66,63,60,58,57,58,60,62,65,67,69,71,73,76];
-  const rainData  = [5, 4, 3, 3, 2, 2, 2, 1, 1, 2, 3, 8,12, 8, 5, 4, 3, 5,20,48,30,15, 8, 6];
-  const lightData = [0,  0,  0,  0,  0,  5,60,200,420,620,750,820,860,880,850,800,700,560,380,180,80,30,10, 0];
+  let tempData  = Array(24).fill(0);
+  let humData   = Array(24).fill(0);
+  let rainData  = Array(24).fill(0);
+  let aqiData = Array(24).fill(0);
+  let dayNightData = Array(24).fill(1); // 1 for Day, 0 for Night
 
-  const now = new Date();
-  const hourLabels = Array.from({length: 24}, (_, i) => {
-    const d = new Date(now - (23 - i) * 3600 * 1000);
-    return String(d.getHours()).padStart(2,'0') + ':00';
-  });
+  let timeLabels = Array(24).fill('');
+  let totalSamples = 0;
 
-  const CUR = { temp: tempData.at(-1), hum: humData.at(-1), rain: rainData.at(-1), light: lightData.at(-1) };
+  let CUR = { temp: 0, hum: 0, rain: 0, aqi: 0, isNight: 0 };
 
   /* ══ 2. UTILITIES ══ */
   const avg  = arr => (arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(1);
@@ -34,14 +33,16 @@ $(function () {
     const g=(17.27*T)/(237.7+T)+Math.log(H/100);
     return Math.round((237.7*g/(17.27-g))*10)/10;
   }
-  function conditionFromData(rain,light) {
-    if(rain>40)   return {label:'Thunderstorm', cls:'pill-rainy',  icon:'⛈️'};
-    if(rain>20)   return {label:'Rainy',         cls:'pill-rainy',  icon:'🌧️'};
-    if(rain>5)    return {label:'Drizzle',        cls:'pill-rainy',  icon:'🌦️'};
-    if(light>700) return {label:'Sunny',          cls:'pill-sunny',  icon:'☀️'};
-    if(light>200) return {label:'Partly Cloudy',  cls:'pill-cloudy', icon:'⛅'};
-    if(light>20)  return {label:'Overcast',       cls:'pill-cloudy', icon:'☁️'};
-    return              {label:'Night',           cls:'pill-night',  icon:'🌙'};
+  function conditionFromData(rain,aqi,isNight) {
+    if(rain >= 1) {
+      // Assuming rain field > 0 means rain
+      if(rain > 50) return {label:'Heavy Rain', cls:'pill-rainy', icon:'⛈️'};
+      return {label:'Raining', cls:'pill-rainy', icon:'🌧️'};
+    }
+    // No rain
+    if(isNight) return {label:'Clear Night', cls:'pill-night', icon:'🌙'};
+    if(aqi > 150) return {label:'Hazy/Smog', cls:'pill-cloudy', icon:'🌫️'};
+    return {label:'Clear Day', cls:'pill-sunny', icon:'☀️'};
   }
 
   /* ══ 3. THEME STATE (declared early, charts read isDark) ══ */
@@ -71,36 +72,50 @@ $(function () {
 
   /* ══ 5. CARDS ══ */
   function populateCards() {
-    $('#val-temp').text(CUR.temp); $('#val-hum').text(CUR.hum);
-    $('#val-rain').text(CUR.rain); $('#val-light').text(CUR.light);
-    $('#avg-temp').text(avg(tempData)+'°C'); $('#avg-hum').text(avg(humData)+'%');
-    $('#peak-rain').text(Math.max(...rainData)+'%');
-    $('#avg-light').text(Math.round(avg(lightData))+' lx');
+    $('#val-temp').text(parseFloat(CUR.temp).toFixed(1)); 
+    $('#val-hum').text(parseFloat(CUR.hum).toFixed(1));
+    $('#val-rain').text(CUR.rain > 0.1 ? "Wet" : "Dry"); 
+    $('#val-aqi').text(Math.round(CUR.aqi));
+    $('#avg-temp').text(parseFloat(avg(tempData)).toFixed(1)+'°C'); 
+    $('#avg-hum').text(parseFloat(avg(humData)).toFixed(1)+'%');
+    $('#peak-rain').text(rainData.filter(v => v>0.1).length); // How many times it rained
+    $('#avg-aqi').text(Math.round(avg(aqiData)));
     $('#tag-temp').text(CUR.temp>35?'Hot':CUR.temp>30?'Warm':CUR.temp>20?'Comfortable':'Cool');
     $('#tag-hum').text(CUR.hum>80?'Very Humid':CUR.hum>60?'Moderate':'Low');
-    $('#tag-rain').text(CUR.rain>50?'Heavy Rain':CUR.rain>20?'Drizzle':CUR.rain>5?'Light':'Dry');
-    $('#tag-light').text(CUR.light>700?'Bright':CUR.light>200?'Moderate':CUR.light>20?'Dim':'Dark');
+    $('#tag-rain').text(CUR.rain>0.1 ? 'Raining' : 'Clear');
+    $('#tag-aqi').text(CUR.aqi>300?'Hazardous':CUR.aqi>200?'Very Unhealthy':CUR.aqi>150?'Unhealthy':CUR.aqi>100?'Poor':CUR.aqi>50?'Moderate':'Good');
   }
   populateCards();
 
   /* ══ 6. DERIVED ══ */
   function populateDerived() {
     const hi=heatIndex(CUR.temp,CUR.hum), dp=dewPoint(CUR.temp,CUR.hum);
-    const cond=conditionFromData(CUR.rain,CUR.light);
+    const cond=conditionFromData(CUR.rain,CUR.aqi,CUR.isNight);
     $('#heatIdx').text(hi);
     const comfort=hi>40?'Dangerous':hi>37?'Very Hot':hi>32?'Uncomfortable':hi>27?'Warm':'Comfortable';
     const comCls=hi>40?'col-bad':hi>35?'col-warn':'col-good';
-    const rainProb=Math.min(100,Math.round(CUR.rain*1.5+Math.max(0,CUR.hum-55)*0.4));
+    const rainProb=CUR.rain > 0 ? 100 : Math.min(100,Math.round(Math.max(0,CUR.hum-55)*1.2));
     const probCls=rainProb>60?'col-bad':rainProb>30?'col-warn':'col-good';
-    const vis=CUR.rain>30?'< 1 km':CUR.rain>10?'2–5 km':'> 10 km';
-    const visCls=CUR.rain>30?'col-bad':CUR.rain>10?'col-warn':'col-good';
+    const vis=CUR.aqi>200?'Poor':CUR.aqi>100?'Reduced':'Good';
+    const visCls=CUR.aqi>150?'col-bad':CUR.aqi>100?'col-warn':'col-good';
     $('#dew').text(dp+'°C').attr('class',dp>24?'col-warn':'col-good');
     $('#comfort').text(comfort).attr('class',comCls);
     $('#rainProb').text(rainProb+'%').attr('class',probCls);
     $('#visibility').text(vis).attr('class',visCls);
+    
+    // Guess atmospheric pressure (derived realistically based on temp/hum/rain conditions)
+    const estPressure = Math.round(1015 - (CUR.rain > 0 ? 12 : 0) - (CUR.temp > 30 ? 4 : 0) + (CUR.temp < 15 ? 5 : 0) - (CUR.hum > 80 ? 3 : 0));
+    $('#pressure').text(estPressure + ' hPa').attr('class', estPressure < 1005 ? 'col-warn' : 'col-good');
+
     $('#cond-icon').text(cond.icon);
-    $('#cond-name').text(CUR.rain>40?'Thunderstorm':CUR.rain>20?'Rainy':CUR.rain>5?'Light Drizzle':CUR.light>700?'Clear & Sunny':CUR.light>200?'Partly Cloudy':'Night / Overcast');
-    $('#cond-desc').text(CUR.rain>40?'Heavy precipitation active. Seek shelter.':CUR.rain>20?'Moderate rainfall detected by sensor.':CUR.rain>5?'Intermittent light rain possible.':CUR.light>700?'Low rain probability. High LDR reading.':CUR.light>200?'Mixed cloud cover, partial sunlight.':'Low ambient light detected by LDR.');
+    $('#cond-name').text(cond.label);
+    
+    let desc = '';
+    if(CUR.rain > 0) desc = 'Precipitation detected. ';
+    if(CUR.isNight) desc += 'Night time condition. ';
+    else desc += 'Day time condition. ';
+    if(CUR.aqi > 100) desc += 'Poor air quality.';
+    $('#cond-desc').text(desc || "Clear weather conditions.");
   }
   populateDerived();
 
@@ -148,12 +163,13 @@ $(function () {
     pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
     ctx.strokeStyle=color; ctx.lineWidth=1.8; ctx.lineJoin='round'; ctx.stroke();
   }
-  setTimeout(()=>{
+  function updateSparklines(){
     sparkline('spark-temp', tempData.slice(-12), '#ea580c');
     sparkline('spark-hum',  humData.slice(-12),  '#0088c7');
     sparkline('spark-rain', rainData.slice(-12), '#3b76d4');
-    sparkline('spark-light',lightData.slice(-12),'#d97706');
-  },150);
+    sparkline('spark-aqi',  aqiData.slice(-12),  '#d97706');
+  }
+  setTimeout(updateSparklines,150);
 
   /* ══ 9. CHART.JS — defaults BEFORE chart creation ══ */
   Chart.defaults.font.family="'Space Mono',monospace";
@@ -185,7 +201,7 @@ $(function () {
   let mainChart=new Chart(mainCtx,{
     type:'line',
     data:{
-      labels:hourLabels,
+      labels:timeLabels,
       datasets:[
         { label:'Temperature °C', data:tempData,
           borderColor:'#ea580c', backgroundColor:makeGrad(mainCtx,234,88,12,0.22,0),
@@ -207,30 +223,26 @@ $(function () {
       plugins:{ legend:{display:false}, tooltip:ttPlugin() },
       scales:{
         x:{ border:{display:false}, grid:{color:c.grid}, ticks:{...ticks,maxTicksLimit:8} },
-        y:{ position:'left', min:18, max:42, border:{display:false}, grid:{color:c.grid},
+        y:{ position:'left', suggestedMin:15, suggestedMax:40, border:{display:false}, grid:{color:c.grid},
             ticks:{...ticks, callback:v=>v+'°'} },
-        y1:{ position:'right', min:40, max:100, border:{display:false}, grid:{display:false},
+        y1:{ position:'right', suggestedMin:30, suggestedMax:100, border:{display:false}, grid:{display:false},
              ticks:{...ticks, callback:v=>v+'%'} }
       }
     };
   }
 
-  /* ── RAIN + LIGHT CHART  (FIX: root type:'bar' was missing) ── */
+  /* ── RAIN CHART ── */
   const rainCtx=document.getElementById('rainChart').getContext('2d');
 
   let rainChart=new Chart(rainCtx,{
-    type:'bar',           /* ← THE FIX: mixed charts need a root type */
+    type:'bar',
     data:{
-      labels:hourLabels,
+      labels:timeLabels,
       datasets:[
-        { /* inherits root type 'bar' */
-          label:'Rain %', data:rainData,
+        { 
+          label:'Rain (Events)', data:rainData,
           backgroundColor:'rgba(59,118,212,0.45)', borderColor:'#3b76d4',
-          borderWidth:1, borderRadius:3, yAxisID:'y' },
-        { type:'line',    /* overrides root type */
-          label:'Light (×10 lx)', data:lightData.map(v=>+(v/10).toFixed(1)),
-          borderColor:'#d97706', backgroundColor:'transparent',
-          borderWidth:2, pointRadius:0, tension:0.4, yAxisID:'y1' }
+          borderWidth:1, borderRadius:3, yAxisID:'y' }
       ]
     },
     options: buildRainOpts()
@@ -240,18 +252,51 @@ $(function () {
     const c=tc();
     const ticks={color:c.text,font:{family:"'Space Mono',monospace",size:9}};
     return {
-      responsive:true, maintainAspectRatio:true,
+      responsive:true, maintainAspectRatio:false,
       interaction:{mode:'index',intersect:false},
       plugins:{
-        legend:{ position:'bottom', labels:{color:c.text,usePointStyle:true,pointStyleWidth:8,padding:14,font:{family:"'Space Mono',monospace",size:9}} },
-        tooltip: ttPlugin({ label:ctx=>ctx.dataset.label==='Light (×10 lx)'?'Light: '+(ctx.raw*10).toFixed(0)+' lx':'Rain: '+ctx.raw+'%' })
+        legend:{ display:false },
+        tooltip: ttPlugin({ label:ctx=>'Rain Events: '+ctx.raw })
       },
       scales:{
         x:{ border:{display:false}, grid:{color:c.grid}, ticks:{...ticks,maxTicksLimit:8} },
-        y:{ position:'left', min:0, max:100, border:{display:false}, grid:{color:c.grid},
-            ticks:{...ticks, callback:v=>v+'%'} },
-        y1:{ position:'right', min:0, max:90, border:{display:false}, grid:{display:false},
-             ticks:{...ticks, callback:v=>(v*10)+'lx'} }
+        y:{ position:'left', min:0, suggestedMax:5, border:{display:false}, grid:{color:c.grid},
+            ticks:{...ticks, stepSize:1} }
+      }
+    };
+  }
+
+  /* ── AQI CHART ── */
+  const aqiCtx=document.getElementById('aqiChart').getContext('2d');
+
+  let aqiChart=new Chart(aqiCtx,{
+    type:'line',
+    data:{
+      labels:timeLabels,
+      datasets:[
+        { 
+          label:'AQI', data:aqiData,
+          borderColor:'#d97706', backgroundColor:'rgba(217,119,6,0.1)',
+          borderWidth:2, pointRadius:0, tension:0.4, fill:true, yAxisID:'y' }
+      ]
+    },
+    options: buildAqiOpts()
+  });
+
+  function buildAqiOpts(){
+    const c=tc();
+    const ticks={color:c.text,font:{family:"'Space Mono',monospace",size:9}};
+    return {
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{ display:false },
+        tooltip: ttPlugin({ label:ctx=>'AQI: '+ctx.raw })
+      },
+      scales:{
+        x:{ border:{display:false}, grid:{color:c.grid}, ticks:{...ticks,maxTicksLimit:8} },
+        y:{ position:'left', min:0, suggestedMax:200, border:{display:false}, grid:{color:c.grid},
+            ticks:{...ticks} }
       }
     };
   }
@@ -259,10 +304,15 @@ $(function () {
   /* ══ 10. REFRESH CHARTS ON THEME CHANGE (safe — charts already exist) ══ */
   function refreshChartTheme(){
     mainChart.options=buildMainOpts(); mainChart.update('none');
+    
     rainChart.options=buildRainOpts();
     rainChart.data.datasets[0].backgroundColor=isDark?'rgba(96,144,240,0.55)':'rgba(59,118,212,0.45)';
     rainChart.data.datasets[0].borderColor     =isDark?'#6090f0':'#3b76d4';
     rainChart.update('none');
+
+    aqiChart.options=buildAqiOpts();
+    aqiChart.update('none');
+    
     drawGauge();
   }
 
@@ -285,29 +335,286 @@ $(function () {
     applyTheme(savedTheme === 'dark');
   $('#themeToggle').on('click',()=>applyTheme(!isDark));
 
-  /* ══ 12. HOURLY LOG TABLE ══ */
+  /* ══ 12. DATA LOG TABLE ══ */
   function buildLog(){
     const rows=[];
-    for(let i=tempData.length-1;i>=tempData.length-12;i--){
-      const cond=conditionFromData(rainData[i],lightData[i]);
+    for(let i=tempData.length-1;i>=Math.max(0, tempData.length-12);i--){
+      if(!timeLabels[i]) continue;
+      const cond=conditionFromData(rainData[i],aqiData[i],dayNightData[i]===0);
       const hi=heatIndex(tempData[i],humData[i]);
       const col=hi>38?'color:var(--red)':hi>34?'color:var(--amber)':'';
-      rows.push('<tr><td>'+hourLabels[i]+'</td><td>'+tempData[i]+'</td><td>'+humData[i]+'</td><td>'+rainData[i]+'</td><td>'+lightData[i]+'</td><td><span class="pill '+cond.cls+'">'+cond.icon+' '+cond.label+'</span></td><td style="'+col+'">'+hi+'°C</td></tr>');
+      rows.push(`<tr>
+        <td>${timeLabels[i]}</td>
+        <td>${parseFloat(tempData[i]).toFixed(1)}</td>
+        <td>${parseFloat(humData[i]).toFixed(1)}</td>
+        <td>${rainData[i] > 0.1 ? 'Detected' : 'None'}</td>
+        <td>${Math.round(aqiData[i])}</td>
+        <td><span class="pill ${cond.cls}">${cond.icon} ${cond.label}</span></td>
+        <td style="${col}">${parseFloat(hi).toFixed(1)}°C</td>
+      </tr>`);
     }
     $('#logBody').html(rows.join(''));
   }
   buildLog();
 
-  /* ══ 13. LIVE JITTER (replace with $.getJSON to ThingSpeak) ══ */
-  function jitter(base,delta){ return +(base+(Math.random()*2-1)*delta).toFixed(1); }
-  setInterval(()=>{
-    CUR.temp =jitter(tempData.at(-1),0.4);
-    CUR.hum  =Math.min(100,Math.max(0,Math.round(jitter(humData.at(-1),1.2))));
-    CUR.rain =Math.max(0,Math.round(jitter(rainData.at(-1),1)));
-    CUR.light=Math.max(0,Math.round(jitter(lightData.at(-1),18)));
-    $('#val-temp').text(CUR.temp); $('#val-hum').text(CUR.hum);
-    $('#val-rain').text(CUR.rain); $('#val-light').text(CUR.light);
-    populateDerived(); drawGauge();
-  },5000);
+  /* ══ 13. DATA FETCHING (ThingSpeak API) ══ */
+  function getChannelId() {
+    return typeof CONFIG !== 'undefined' ? CONFIG.THINGSPEAK_CHANNEL_ID : 'YOUR_CHANNEL_ID';
+  }
+  function getApiKey() {
+    return typeof CONFIG !== 'undefined' ? CONFIG.THINGSPEAK_READ_API_KEY : '';
+  }
+  
+  function fetchThingSpeakData(scale) {
+    const CHANNEL_ID = getChannelId();
+    const API_KEY = getApiKey();
+    let url = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?`;
+    let lastUrl = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds/last.json`;
+    
+    if (API_KEY) {
+      url += `api_key=${API_KEY}&`;
+      lastUrl += `?api_key=${API_KEY}`;
+    }
+    
+    $('#main-chart-sub').text(scale === 'monthly' ? 'Past Month' : scale === 'daily' ? 'Past 30 Days' : 'Past 24 Hours');
+    $('#chart-sub-label').text(scale === 'monthly' ? 'Monthly Profile' : scale === 'daily' ? 'Daily Profile' : 'Hourly Profile');
+    
+    // Local groupings instead of ThingSpeak backend averages
+    if (scale === 'hourly') {
+      url += 'days=2'; // Fetch robust raw points
+    } 
+    else if (scale === 'daily') {
+      url += 'days=30'; 
+    } 
+    else if (scale === 'monthly') {
+      url += 'results=8000'; // Bring in max allowed points for long timeline
+    }
+
+    if (getChannelId() === 'YOUR_CHANNEL_ID') {
+      // Provide mock fallback if channel ID isn't set
+      console.warn("Please set your ThingSpeak Channel ID!");
+      generateMockData(scale);
+      return;
+    }
+
+    $.getJSON(url, function(data) {
+      if (!data.feeds || data.feeds.length === 0) return;
+      $('#samples-total').text(data.channel.last_entry_id || '—');
+      
+      const groupedMap = {};
+      
+      data.feeds.forEach(f => {
+          const date = new Date(f.created_at);
+          let gKey;
+          
+          if (scale === 'hourly') {
+              gKey = date.getFullYear() + '-' + pad2(date.getMonth() + 1) + '-' + pad2(date.getDate()) + ' ' + pad2(date.getHours()) + ':00';
+          } else if (scale === 'daily') {
+              gKey = date.getFullYear() + '-' + pad2(date.getMonth() + 1) + '-' + pad2(date.getDate());
+          } else {
+              gKey = date.getFullYear() + '-' + pad2(date.getMonth() + 1);
+          }
+          
+          if(!groupedMap[gKey]) groupedMap[gKey] = { temp:0, hum:0, rain:0, aqi:0, count:0, dayNight:0, date: date };
+          groupedMap[gKey].temp += parseFloat(f.field1 || 0);
+          groupedMap[gKey].hum += parseFloat(f.field2 || 0);
+          groupedMap[gKey].aqi += parseFloat(f.field3 || 0);
+          groupedMap[gKey].rain += parseFloat(f.field4 || 0) > 0 ? 1 : 0;
+          groupedMap[gKey].dayNight += parseFloat(f.field5 || 0);
+          groupedMap[gKey].count++;
+      });
+      
+      let processedFeeds = Object.keys(groupedMap).map(k => {
+          let m = groupedMap[k];
+          return {
+             created_at: m.date,
+             field1: (m.temp / m.count).toFixed(1),
+             field2: (m.hum / m.count).toFixed(1),
+             field3: (m.aqi / m.count).toFixed(1),
+             field4: m.rain, // sum of rain events
+             field5: (m.dayNight / m.count) > 0.5 ? 1 : 0
+          };
+      });
+      
+      if (scale === 'hourly') processedFeeds = processedFeeds.slice(-24);
+      else if (scale === 'daily') processedFeeds = processedFeeds.slice(-30);
+      else if (scale === 'monthly') processedFeeds = processedFeeds.slice(-12);
+
+      // Empty arrays to ensure zero accumulation
+      tempData.length = 0; humData.length = 0; 
+      aqiData.length = 0; rainData.length = 0; 
+      timeLabels.length = 0; dayNightData.length = 0;
+
+      processedFeeds.forEach(feed => {
+        let date = new Date(feed.created_at);
+        if (scale === 'hourly') timeLabels.push(pad2(date.getHours()) + ':00');
+        else if (scale === 'daily') timeLabels.push(date.getDate() + '/' + (date.getMonth()+1));
+        else timeLabels.push(date.toLocaleString('default', { month: 'short' }));
+        
+        tempData.push(parseFloat(feed.field1 || 0));
+        humData.push(parseFloat(feed.field2 || 0));
+        aqiData.push(parseFloat(feed.field3 || 0));
+        rainData.push(parseFloat(feed.field4 || 0));
+        dayNightData.push(parseFloat(feed.field5 || 0));
+      });
+
+      // Try fetching the absolute latest raw point for the live cards first
+      $.getJSON(lastUrl, function(latest) {
+          if (latest && latest.created_at) {
+              CUR.temp = parseFloat(latest.field1 || 0).toFixed(1);
+              CUR.hum = parseFloat(latest.field2 || 0).toFixed(1);
+              CUR.aqi = Math.round(parseFloat(latest.field3 || 0));
+              CUR.rain = parseFloat(latest.field4 || 0);
+              CUR.isNight = parseFloat(latest.field5 || 1) === 0;
+          } else {
+              setCurFromHistory();
+          }
+          updateUI();
+      }).fail(function() {
+          setCurFromHistory();
+          updateUI();
+      });
+
+    }).fail(function() {
+      console.warn("Failed to fetch from ThingSpeak - Falling back to local mock rendering for timeline");
+      generateMockData(scale);
+    });
+  }
+
+  function setCurFromHistory() {
+      if(tempData.length > 0) {
+          CUR.temp = parseFloat(tempData.at(-1)).toFixed(1);
+          CUR.hum = parseFloat(humData.at(-1)).toFixed(1);
+          CUR.aqi = Math.round(aqiData.at(-1));
+          CUR.rain = rainData.at(-1);
+          CUR.isNight = dayNightData.at(-1) === 0;
+      }
+  }
+
+  function generateMockData(scale) {
+      let count = scale === 'hourly' ? 24 : scale === 'daily' ? 30 : 12;
+      tempData.length = 0; humData.length = 0; aqiData.length = 0; rainData.length = 0; timeLabels.length = 0; dayNightData.length = 0;
+      let now = new Date();
+      
+      let temp = 20;
+      let hum = 60;
+      let rainCycles = 0;
+      
+      for(let i=0; i<count; i++) {
+         let d;
+         if(scale === 'hourly') {
+             d = new Date(now - (count - i - 1) * 3600 * 1000);
+             timeLabels.push(pad2(d.getHours()) + ':00');
+         } else if (scale === 'daily') {
+             d = new Date(now - (count - i - 1) * 86400 * 1000);
+             timeLabels.push(d.getDate() + '/' + (d.getMonth()+1));
+         } else {
+             d = new Date(now.getFullYear(), now.getMonth() - (count - i - 1), 1);
+             timeLabels.push(d.toLocaleString('default', { month: 'short' }));
+         }
+         
+         const hour = d.getHours();
+         const isDay = (hour >= 6 && hour < 18);
+         let hourShifted = (hour - 4 + 24) % 24; 
+         let diurnalBase = -Math.cos(hourShifted * Math.PI / 12); 
+         let targetTemp = 27 + (13 * diurnalBase); 
+
+         let isRaining = false;
+         if (rainCycles > 0) {
+             targetTemp -= 6;
+             rainCycles--;
+             isRaining = true;
+         } else if (Math.random() < 0.1) {
+             rainCycles = Math.floor(Math.random() * 2) + 1;
+             isRaining = true;
+         }
+         
+         temp += (targetTemp - temp) * 0.4 + (Math.random() * 2 - 1);
+         if (temp > 40) temp = 40; if (temp < 15) temp = 15;
+
+         let targetHum = 100 - ((temp - 15) / 25) * 50; 
+         if (isRaining) targetHum = 95;
+         hum += (targetHum - hum) * 0.4 + (Math.random() * 4 - 2);
+         if (hum > 100) hum = 100; if (hum < 30) hum = 30;
+
+         let targetAqi = isDay ? 120 : 60;
+         if (isRaining) targetAqi = 40; 
+         let aqi = Math.floor(targetAqi + (Math.random() * 30 - 15));
+
+         tempData.push(parseFloat(temp.toFixed(1)));
+         humData.push(parseFloat(hum.toFixed(1)));
+         aqiData.push(Math.max(10, Math.round(aqi)));
+         rainData.push(isRaining ? 1 : 0);
+         dayNightData.push(isDay ? 1 : 0);
+      }
+      
+      // Update top live cards with the absolute latest point
+      if(tempData.length > 0) {
+          CUR.temp = parseFloat(tempData.at(-1)).toFixed(1);
+          CUR.hum = parseFloat(humData.at(-1)).toFixed(1);
+          CUR.aqi = Math.round(aqiData.at(-1));
+          CUR.rain = rainData.at(-1);
+          CUR.isNight = dayNightData.at(-1) === 0;
+      }
+      updateUI();
+  }
+
+  function updateUI() {
+      populateCards();
+      populateDerived();
+      drawGauge();
+      updateSparklines();
+      buildLog();
+      
+      // Explicitly re-attach arrays in case Chart.js severed the reference
+      mainChart.data.labels = timeLabels;
+      mainChart.data.datasets[0].data = tempData;
+      mainChart.data.datasets[1].data = humData;
+      mainChart.update();
+      
+      rainChart.data.labels = timeLabels;
+      rainChart.data.datasets[0].data = rainData;
+      rainChart.update();
+
+      aqiChart.data.labels = timeLabels;
+      aqiChart.data.datasets[0].data = aqiData;
+      aqiChart.update();
+  }
+
+  // Use localStorage to remember user's last preferred scale
+  const savedScale = localStorage.getItem('preferredTimeScale') || 'hourly';
+  $('#timeScale').val(savedScale);
+
+  $('#timeScale').on('change', function() {
+      const scale = $(this).val();
+      localStorage.setItem('preferredTimeScale', scale); // Cache choice
+      
+      // Reset chart visuals quickly
+      mainChart.data.labels.length = 0;
+      mainChart.data.datasets.forEach(ds => ds.data.length = 0);
+      mainChart.update();
+      
+      rainChart.data.labels.length = 0;
+      rainChart.data.datasets.forEach(ds => ds.data.length = 0);
+      rainChart.update();
+
+      aqiChart.data.labels.length = 0;
+      aqiChart.data.datasets.forEach(ds => ds.data.length = 0);
+      aqiChart.update();
+      
+      fetchThingSpeakData(scale);
+  });
+
+  // Load environment variables before fetching
+  if (typeof loadConfig === 'function') {
+      loadConfig().then(() => {
+          fetchThingSpeakData(savedScale);
+      });
+  } else {
+      fetchThingSpeakData(savedScale);
+  }
+  
+  // Auto-refresh every 5 mins
+  setInterval(() => fetchThingSpeakData($('#timeScale').val()), 300000);
 
 });

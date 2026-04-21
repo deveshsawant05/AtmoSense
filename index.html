@@ -46,7 +46,7 @@
           <span class="text-[var(--green)] uppercase tracking-widest">Live Feed</span>
         </div>
         <div class="h-4 w-px bg-[var(--border)]"></div>
-        <div>NODE <span class="text-[var(--accent)]">ESP-A9F3</span></div>
+        <div>NODE <span class="text-[var(--accent)]">ESP-8266</span></div>
         <div class="h-4 w-px bg-[var(--border)]"></div>
         <div>PLATFORM <span class="text-[var(--accent)]">ThingSpeak</span></div>
         <div class="h-4 w-px bg-[var(--border)]"></div>
@@ -72,7 +72,7 @@
       <div class="font-mono text-[11px] tracking-[3px] uppercase text-[var(--accent)] mb-2">// Weather Data Acquisition System</div>
       <h1 class="page-title">Environmental<br/>Sensor Dashboard</h1>
       <p class="mt-3 text-[var(--text-mid)] text-[15px] leading-relaxed max-w-xl">
-        Real-time monitoring of temperature, humidity, rainfall and light intensity via IoT sensors —
+        Real-time monitoring of temperature, humidity, rainfall, AQI, and Day/Night status via IoT sensors —
         collected, stored and analysed for predictive insights.
       </p>
     </div>
@@ -81,13 +81,17 @@
     <div class="status-bar fade-up mb-10">
       <div class="status-item">UPTIME <span class="val" id="uptime">—</span></div>
       <div class="status-div"></div>
-      <div class="status-item">SENSOR HW <span class="val">DHT11 · LDR · YL-83</span></div>
+      <div class="status-item">SENSOR HW <span class="val">DHT11 · MQ-135 · Rain · LDR</span></div>
       <div class="status-div"></div>
       <div class="status-item">PROTOCOL <span class="val">HTTP / Wi-Fi 2.4 GHz</span></div>
       <div class="status-div"></div>
-      <div class="status-item">SAMPLES TODAY <span class="val">288</span></div>
-      <div class="status-div"></div>
-      <div class="status-item">INTERVAL <span class="val">5 min</span></div>
+      <div class="status-item">VIEW
+        <select id="timeScale" class="bg-transparent border-b border-[var(--accent)] outline-none text-[var(--accent)] font-semibold ml-2 cursor-pointer">
+          <option value="hourly">Hourly</option>
+          <option value="daily">Daily</option>
+          <option value="monthly">Monthly</option>
+        </select>
+      </div>
     </div>
 
     <!-- ── SECTION 01: Sensor Readings ── -->
@@ -130,33 +134,33 @@
       <!-- Rain -->
       <div class="sensor-card card-rain fade-up" style="animation-delay:.16s">
         <div class="flex justify-between items-start mb-5">
-          <div class="card-label">Rain Level</div>
+          <div class="card-label">Rain Status</div>
           <div class="card-icon icon-rain">🌧</div>
         </div>
         <div class="card-value">
-          <span id="val-rain">12</span><span class="card-unit">%</span>
+          <span id="val-rain">Off</span><span class="card-unit"></span>
         </div>
         <div class="card-sub mt-3">
           <span class="tag tag-rain" id="tag-rain">Dry</span>
-          <span>Peak 24h: <strong id="peak-rain">—</strong></span>
+          <span>Rain Count: <strong id="peak-rain">—</strong></span>
         </div>
         <div class="card-spark mt-4"><canvas id="spark-rain"></canvas></div>
       </div>
 
-      <!-- Light -->
+      <!-- AQI -->
       <div class="sensor-card card-light fade-up" style="animation-delay:.24s">
         <div class="flex justify-between items-start mb-5">
-          <div class="card-label">Light Intensity</div>
-          <div class="card-icon icon-light">☀</div>
+          <div class="card-label">Air Quality (AQI)</div>
+          <div class="card-icon icon-light">🌬️</div>
         </div>
         <div class="card-value">
-          <span id="val-light">812</span><span class="card-unit">lx</span>
+          <span id="val-aqi">110</span><span class="card-unit">AQI</span>
         </div>
         <div class="card-sub mt-3">
-          <span class="tag tag-light" id="tag-light">Bright</span>
-          <span>Avg 24h: <strong id="avg-light">—</strong></span>
+          <span class="tag tag-light" id="tag-aqi">Moderate</span>
+          <span>Avg 24h: <strong id="avg-aqi">—</strong></span>
         </div>
-        <div class="card-spark mt-4"><canvas id="spark-light"></canvas></div>
+        <div class="card-spark mt-4"><canvas id="spark-aqi"></canvas></div>
       </div>
     </div>
 
@@ -183,7 +187,7 @@
         <div class="flex flex-col items-center justify-center min-h-[140px] gap-2 text-center">
           <div class="text-6xl leading-none condition-icon" id="cond-icon">☀️</div>
           <div class="text-xl font-bold text-[var(--text-hi)]" id="cond-name">Clear &amp; Sunny</div>
-          <div class="text-[13px] text-[var(--text-mid)]" id="cond-desc">Low rain probability. High light intensity.</div>
+          <div class="text-[13px] text-[var(--text-mid)]" id="cond-desc">Clear weather conditions.</div>
         </div>
       </div>
 
@@ -201,7 +205,7 @@
     </div>
 
     <!-- ── SECTION 03: Charts ── -->
-    <div class="sec-label fade-up">03 · 24-Hour Trend Analysis</div>
+    <div class="sec-label fade-up">03 · Trend Analysis</div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-12 fade-up">
 
@@ -210,7 +214,7 @@
         <div class="flex items-start justify-between mb-5">
           <div>
             <div class="text-[var(--text-hi)] font-semibold text-[15px]">Temperature &amp; Humidity</div>
-            <div class="font-mono text-[10px] text-[var(--text-mid)] tracking-wider uppercase mt-0.5">Past 24 Hours · 5-min Intervals</div>
+            <div class="font-mono text-[10px] text-[var(--text-mid)] tracking-wider uppercase mt-0.5" id="main-chart-sub">Trend</div>
           </div>
           <div class="flex gap-4">
             <div class="flex items-center gap-1.5 text-[11px] text-[var(--text-mid)] font-mono">
@@ -225,17 +229,33 @@
       </div>
 
       <!-- Rain + Light (1/3) -->
-      <div class="chart-card">
-        <div class="mb-5">
-          <div class="text-[var(--text-hi)] font-semibold text-[15px]">Rainfall &amp; Light</div>
-          <div class="font-mono text-[10px] text-[var(--text-mid)] tracking-wider uppercase mt-0.5">24-Hour Profile</div>
+      <div class="flex flex-col gap-4">
+        <!-- Rain Events -->
+        <div class="chart-card flex-1 flex flex-col">
+          <div class="mb-2">
+            <div class="text-[var(--text-hi)] font-semibold text-[15px]">Rain Events</div>
+            <div class="font-mono text-[10px] text-[var(--text-mid)] tracking-wider uppercase mt-0.5" id="chart-sub-label">Profile</div>
+          </div>
+          <div class="relative flex-1 min-h-[80px]">
+            <canvas id="rainChart"></canvas>
+          </div>
         </div>
-        <canvas id="rainChart" height="180"></canvas>
+
+        <!-- AQI -->
+        <div class="chart-card flex-1 flex flex-col">
+          <div class="mb-2">
+            <div class="text-[var(--text-hi)] font-semibold text-[15px]">Air Quality Index</div>
+            <div class="font-mono text-[10px] text-[var(--text-mid)] tracking-wider uppercase mt-0.5" id="aqi-chart-sub-label">Profile</div>
+          </div>
+          <div class="relative flex-1 min-h-[80px]">
+            <canvas id="aqiChart"></canvas>
+          </div>
+        </div>
       </div>
     </div>
 
     <!-- ── SECTION 04: Log ── -->
-    <div class="sec-label fade-up">04 · Hourly Log (Last 12 Hours)</div>
+    <div class="sec-label fade-up">04 · Data Log</div>
 
     <div class="chart-card fade-up overflow-x-auto mb-12">
       <table class="log-table w-full min-w-[640px]">
@@ -244,8 +264,8 @@
             <th>Time</th>
             <th>Temp (°C)</th>
             <th>Humidity (%)</th>
-            <th>Rain (%)</th>
-            <th>Light (lx)</th>
+            <th>Rain</th>
+            <th>AQI</th>
             <th>Condition</th>
             <th>Heat Index</th>
           </tr>
@@ -262,10 +282,11 @@
       AtmoSense Dashboard · <span class="text-[var(--text-mid)]">NodeMCU ESP8266</span> · IJSAT Vol.16 No.2 2025
     </div>
     <div class="font-mono text-[10px] text-[var(--text-lo)] tracking-wide">
-      DHT11 · YL-83 · LDR · I²C · HTTP/TCP
+      DHT11 · MQ-135 · Rain Sensor · Photocell · HTTP/TCP
     </div>
   </footer>
 
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
