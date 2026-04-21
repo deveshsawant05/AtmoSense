@@ -1,0 +1,25 @@
+## OS files
+.DS_Store
+Thumbs.db
+
+## Editor folders
+.vscode/
+.idea/
+
+## Logs
+*.log
+
+## Build / temp
+dist/
+build/
+tmp/
+temp/
+
+## Package managers
+node_modules/
+package-lock.json
+yarn.lock
+
+## Optional local env files
+.env
+.env.local
